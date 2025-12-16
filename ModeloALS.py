@@ -1,3 +1,5 @@
+from pyspark import Row
+from pyspark.ml.recommendation import ALS
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as f
 
@@ -51,3 +53,47 @@ ratings_total= ratings_com.unionByName(valoracionesEP)
 #Verficicación de que las valoraciones de EP ya están en el dataset final:
 num_ep = ratings_total.filter(f.col("user_id") == 666666).count()
 print(f"Valoraciones del usuario EP en el dataset final: {num_ep}")
+
+#Parte 2: MODELO ALS
+als=ALS(
+    userCol="user_id",
+    itemCol="anime_id",
+    ratingCol="rating",
+    rank=8,
+    maxIter=3,
+    regParam=0.15,
+    coldStartStrategy="drop",
+)
+modelo = als.fit(ratings_total)
+
+#como ALS trabaja con dataframes, hay que crear uno para el usuario 666666:
+usuario = spark.createDataFrame([Row(user_id=666666 )])
+
+#obtener recomendaciones para el usuario
+recomendaciones_ep = modelo.recommendForUserSubset(usuario, 20)
+
+
+recomendaciones_ep = recomendaciones_ep.select(
+    f.col("user_id"),
+    f.explode("recommendations").alias("rec")
+)
+
+#seleccionar solo las columnas necesarias para las recomendaciones finales:'anime_id' (ID del anime) y 'rating' (valoración predicha del modelo ALS).
+recomendaciones_ep = recomendaciones_ep.select(
+    "user_id",
+    f.col("rec.anime_id").alias("anime_id"),
+    f.col("rec.rating").alias("predicted_rating")
+)
+
+#unir con la info de anime
+anime = anime.select(
+    f.col("ID").cast("int").alias("anime_id"),
+    f.col("Name").alias("name"),
+    f.col("English name").alias("english_name"),
+    f.col("Type").alias("type")
+)
+#unir las recomendaciones con los detalles de los animes (nombre, tipo, etc.) usando 'anime_id' como clave de unión (INNER JOIN).
+recs_ep = recomendaciones_ep.join(anime, on="anime_id", how="inner")
+
+print("\n=== RECOMENDACIONES PARA EL USUARIO 666666 === (vista previa)")
+recs_ep.show(truncate=False)
